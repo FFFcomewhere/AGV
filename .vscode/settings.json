@@ -1,0 +1,7 @@
+{
+    "files.associations": {
+        "chassis_task.h": "c",
+        "*.tcc": "c",
+        "chassis_behaviour.h": "c"
+    }
+}

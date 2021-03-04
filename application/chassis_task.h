@@ -30,14 +30,14 @@
 
 //the channel num of controlling vertial speed 
 //前后的遥控器通道号码
-#define CHASSIS_X_CHANNEL 1
+#define CHASSIS_X_CHANNEL 3
 //the channel num of controlling horizontal speed
-//左右的遥控器通道号码
-#define CHASSIS_Y_CHANNEL 0
+//平移模式下，左右的遥控器通道号码
+#define CHASSIS_Y_CHANNEL 2
 
 //in some mode, can use remote control to control rotation speed
-//在特殊模式下，可以通过遥控器控制旋转
-#define CHASSIS_WZ_CHANNEL 2
+//可以通过遥控器控制旋转
+#define CHASSIS_WZ_CHANNEL 0
 
 //the channel of choosing chassis mode,
 //选择底盘状态 开关通道号
@@ -53,7 +53,7 @@
 #define CHASSIS_ANGLE_Z_RC_SEN 0.000002f
 //in not following yaw angle mode, rocker value change to rotation speed
 //不跟随云台的时候 遥控器的yaw遥杆（max 660）转化成车体旋转速度的比例
-#define CHASSIS_WZ_RC_SEN 0.01f
+#define CHASSIS_WZ_RC_SEN 0.001f
 
 #define CHASSIS_ACCEL_X_NUM 0.1666666667f
 #define CHASSIS_ACCEL_Y_NUM 0.3333333333f
@@ -115,6 +115,19 @@
 //摇摆过程底盘运动最大角度(rad)
 #define SWING_MOVE_ANGLE 0.31415926535897932384626433832795f
 
+#define CHASSIS_ANGLE_MAX PI/2
+#define CHASSIS_ANGLE_MID 0.0f
+#define CHASSIS_ANGLE_MIN -PI/2
+
+//电机反馈码盘值范围
+#define HALF_ECD_RANGE              4096
+#define ECD_RANGE                   8191
+//电机rmp 变化成 旋转速度的比例
+#define MOTOR_RPM_TO_SPEED          0.00290888208665721596153948461415f
+#define MOTOR_ECD_TO_ANGLE          0.000021305288720633905968306772076277f
+#define FULL_COUNT                  18
+
+
 //chassis motor speed PID
 //底盘电机速度环PID
 #define M3505_MOTOR_SPEED_PID_KP 15000.0f
@@ -125,29 +138,34 @@
 
 //chassis follow angle PID
 //底盘旋转跟随PID
-#define CHASSIS_FOLLOW_GIMBAL_PID_KP 40.0f
+#define CHASSIS_FOLLOW_GIMBAL_PID_KP 10.0f //40
 #define CHASSIS_FOLLOW_GIMBAL_PID_KI 0.0f
 #define CHASSIS_FOLLOW_GIMBAL_PID_KD 0.0f
 #define CHASSIS_FOLLOW_GIMBAL_PID_MAX_OUT 6.0f
 #define CHASSIS_FOLLOW_GIMBAL_PID_MAX_IOUT 0.2f
 
+#define FRONT 0
+#define BACK 1
+
 typedef enum
 {
-  CHASSIS_VECTOR_FOLLOW_GIMBAL_YAW,   //chassis will follow yaw gimbal motor relative angle.底盘会跟随云台相对角度
-  CHASSIS_VECTOR_FOLLOW_CHASSIS_YAW,  //chassis will have yaw angle(chassis_yaw) close-looped control.底盘有底盘角度控制闭环
-  CHASSIS_VECTOR_NO_FOLLOW_YAW,       //chassis will have rotation speed control. 底盘有旋转速度控制
-  CHASSIS_VECTOR_RAW,                 //control-current will be sent to CAN bus derectly.
-
+  CHASSIS_VECTOR_RAW,
+  CHASSIS_VECTOR_NO_FOLLOW_YAW,
 } chassis_mode_e;
 
 typedef struct
 {
   const motor_measure_t *chassis_motor_measure;
+  int8_t ecd_count;   //记录转向电机编码器圈数
+  int16_t exter_ecd;    //外置编码器，转向电机专属
   fp32 accel;
   fp32 speed;
   fp32 speed_set;
   int16_t give_current;
 } chassis_motor_t;
+
+
+
 
 typedef struct
 {
@@ -155,31 +173,39 @@ typedef struct
   const fp32 *chassis_INS_angle;             //the point to the euler angle of gyro sensor.获取陀螺仪解算出的欧拉角指针
   chassis_mode_e chassis_mode;               //state machine. 底盘控制状态机
   chassis_mode_e last_chassis_mode;          //last state machine.底盘上次控制状态机
+  
+  
+
   chassis_motor_t motor_chassis[4];          //chassis motor data.底盘电机数据
-  pid_type_def motor_speed_pid[4];             //motor speed PID.底盘电机速度pid
-  pid_type_def chassis_angle_pid;              //follow angle PID.底盘跟随角度pid
+  pid_type_def motor_speed_pid[4];           //motor speed PID.底盘电机速度pid
+  pid_type_def chassis_angle_pid[2];         //follow angle PID.底盘转向电机角度pid
+
 
   first_order_filter_type_t chassis_cmd_slow_set_vx;  //use first order filter to slow set-point.使用一阶低通滤波减缓设定值
-  first_order_filter_type_t chassis_cmd_slow_set_vy;  //use first order filter to slow set-point.使用一阶低通滤波减缓设定值
 
   fp32 vx;                          //chassis vertical speed, positive means forward,unit m/s. 底盘速度 前进方向 前为正，单位 m/s
-  fp32 vy;                          //chassis horizontal speed, positive means letf,unit m/s.底盘速度 左右方向 左为正  单位 m/s
-  fp32 wz;                          //chassis rotation speed, positive means counterclockwise,unit rad/s.底盘旋转角速度，逆时针为正 单位 rad/s
+  fp32 wz[2];                          //转向角速度
+  fp32 angle[2];                       //转向角度
+
   fp32 vx_set;                      //chassis set vertical speed,positive means forward,unit m/s.底盘设定速度 前进方向 前为正，单位 m/s
-  fp32 vy_set;                      //chassis set horizontal speed,positive means left,unit m/s.底盘设定速度 左右方向 左为正，单位 m/s
-  fp32 wz_set;                      //chassis set rotation speed,positive means counterclockwise,unit rad/s.底盘设定旋转角速度，逆时针为正 单位 rad/s
+  fp32 wz_set[2];                     //转向角速度的目标值
+  fp32 angle_set[2];                  //转向角度目标值
+       
+  
   fp32 chassis_relative_angle;      //the relative angle between chassis and gimbal.底盘与云台的相对角度，单位 rad
   fp32 chassis_relative_angle_set;  //the set relative angle.设置相对云台控制角度
-  fp32 chassis_yaw_set;             
+    
 
   fp32 vx_max_speed;  //max forward speed, unit m/s.前进方向最大速度 单位m/s
   fp32 vx_min_speed;  //max backward speed, unit m/s.后退方向最大速度 单位m/s
-  fp32 vy_max_speed;  //max letf speed, unit m/s.左方向最大速度 单位m/s
-  fp32 vy_min_speed;  //max right speed, unit m/s.右方向最大速度 单位m/s
+  fp32 angle_max;     //转向最大角度
+  fp32 angle_mid;     //转向中间角度
+  fp32 angle_min;     //转向最小角度
+
   fp32 chassis_yaw;   //the yaw angle calculated by gyro sensor and gimbal motor.陀螺仪和云台电机叠加的yaw角度
   fp32 chassis_pitch; //the pitch angle calculated by gyro sensor and gimbal motor.陀螺仪和云台电机叠加的pitch角度
   fp32 chassis_roll;  //the roll angle calculated by gyro sensor and gimbal motor.陀螺仪和云台电机叠加的roll角度
-
+  
 } chassis_move_t;
 
 /**
@@ -210,6 +236,6 @@ extern void chassis_task(void const *pvParameters);
   * @param[out]     chassis_move_rc_to_vector: "chassis_move" 变量指针
   * @retval         none
   */
-extern void chassis_rc_to_control_vector(fp32 *vx_set, fp32 *vy_set, chassis_move_t *chassis_move_rc_to_vector);
+extern void chassis_rc_to_control_vector(fp32 *vx_set, chassis_move_t *chassis_move_rc_to_vector);
 
 #endif
